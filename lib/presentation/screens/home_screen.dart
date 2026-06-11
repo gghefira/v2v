@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 
 import '../../data/data_source.dart';
 import '../../data/mock_data_source.dart';
-// import '../../data/serial_data_source.dart'; // ← uncomment saat hardware ready
+// import '../../data/jsonl_file_data_source.dart'; // ← untuk playback file recording
+// import '../../data/serial_data_source.dart';     // ← untuk live data dari Pi
 import '../../domain/models/v2v_frame.dart';
 import '../widgets/sensor_view.dart';
 
@@ -17,15 +18,13 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // ============================================================
-  // 🔥 SUMBER DATA — swap di sini saat hardware Pi sudah ready
-  // ============================================================
+
   late final DataSource _source = MockDataSource();
-  // late final DataSource _source = SerialDataSource();
 
   EgoState _ego = EgoState.empty;
   WarningInfo? _warning;
   String _timeText = "";
+  String _dateText = "";
   ConnectionStatus _connectionStatus = const ConnectionStatus.mock();
 
   StreamSubscription<V2VFrame>? _sub;
@@ -52,21 +51,15 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // ============================================================
-  // Connection status: tergantung tipe DataSource
-  // ============================================================
+  // Connection status
   void _initConnectionStatus() {
     if (_source is MockDataSource) {
       _connectionStatus = const ConnectionStatus.mock();
     } else {
-      // SerialDataSource atau lainnya — mulai dengan "live" optimistic,
-      // stale watcher akan override jadi DISCONNECTED kalau tidak ada data
       _connectionStatus = const ConnectionStatus.live();
     }
   }
 
-  /// Pantau apakah data masih flowing. Kalau tidak ada frame > 2 detik
-  /// dan source bukan mock, anggap stale/disconnected.
   void _startStaleWatcher() {
     _staleWatcher = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -88,9 +81,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // ============================================================
   // Stream subscription dari DataSource
-  // ============================================================
   void _startStream() {
     _sub = _source.stream().listen(
       (frame) {
@@ -111,19 +102,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ============================================================
-  // Hitung warning untuk UI dari ego + list neighbors.
-  //
-  // Logic:
-  //   1. Untuk tiap neighbor: hitung jarak & arah relatif ke ego
-  //   2. Base risk dari jarak:
-  //        < 10m  → DANGER
-  //        < 25m  → WARNING
-  //        else   → SAFE
-  //   3. Override: kalau neighbor.emergency_status == EMERGENCY,
-  //      paksa jadi DANGER (mobil itu broadcast bahaya).
-  //   4. Ambil ancaman TERDEKAT sebagai yang ditampilkan.
-  // ============================================================
   WarningInfo? _computeWarning(EgoState ego, List<NeighborState> neighbors) {
     if (neighbors.isEmpty) return null;
 
@@ -131,11 +109,18 @@ class _HomeScreenState extends State<HomeScreen> {
     double bestDist = double.infinity;
 
     for (final n in neighbors) {
-      final dx = n.x - ego.x;
-      final dy = n.y - ego.y;
-      final distance = sqrt(dx * dx + dy * dy);
+      const earthR = 6371000.0;
+      final egoLatRad = ego.lat * pi / 180;
+      final dxEast = (n.lon - ego.lon) * pi / 180 * earthR * cos(egoLatRad);
+      final dyNorth = (n.lat - ego.lat) * pi / 180 * earthR;
+      final h = ego.headingDeg * pi / 180;
+      final dxBody = dxEast * cos(h) - dyNorth * sin(h);
+      final dyBody = dxEast * sin(h) + dyNorth * cos(h);
 
-      // Tentukan level dari jarak
+      // Distance & direction
+      final distance = sqrt(dxBody * dxBody + dyBody * dyBody);
+
+      // Level dari jarak
       WarningLevel level;
       if (distance < 10) {
         level = WarningLevel.danger;
@@ -154,17 +139,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (level == WarningLevel.safe) continue;
-
-      // Hanya ambil ancaman terdekat
       if (distance >= bestDist) continue;
 
-      // Tentukan arah relatif (ego frame)
+      // Tentukan arah relatif (body frame)
       WarningDirection dir;
-      if (dy > 5) {
+      if (dyBody > 5) {
         dir = WarningDirection.front;
-      } else if (dy < -5) {
+      } else if (dyBody < -5) {
         dir = WarningDirection.rear;
-      } else if (dx < 0) {
+      } else if (dxBody < 0) {
         dir = WarningDirection.left;
       } else {
         dir = WarningDirection.right;
@@ -183,7 +166,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ============================================================
   // Clock di gauge kiri
-  // ============================================================
   void _startClock() {
     _updateTime();
     _clockTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -198,7 +180,17 @@ class _HomeScreenState extends State<HomeScreen> {
     hour = hour % 12;
     if (hour == 0) hour = 12;
     final mm = now.minute.toString().padLeft(2, '0');
-    setState(() => _timeText = "$hour:$mm $period");
+
+    const months = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+    final dateStr = '${now.day} ${months[now.month - 1]} ${now.year}';
+
+    setState(() {
+      _timeText = "$hour:$mm $period";
+      _dateText = dateStr;
+    });
   }
 
   @override
@@ -213,11 +205,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0E2A),
+      backgroundColor: const Color(0xFF06091F),
       body: SensorView(
         ego: _ego,
         warning: _warning,
         timeText: _timeText,
+        dateText: _dateText,
         connectionStatus: _connectionStatus,
       ),
     );

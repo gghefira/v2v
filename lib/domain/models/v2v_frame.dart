@@ -1,12 +1,20 @@
 // ============================================================
 // 🔥 V2V FRAME MODEL
-//    Bentuk data yang mengalir dari Pi (UKF + Neighbour Track)
-//    ke Flutter UI. Sesuai output di diagram arsitektur:
+//    Bentuk data yang mengalir dari Pi ke Flutter UI.
 //
-//      Pi  ──►  { ego, neighbors }  ──►  Flutter
+//    Mengikuti diagram arsitektur:
 //
-//    Saat MockDataSource: bentuk ini di-generate dari CSV.
-//    Saat SerialDataSource: di-parse dari frame JSON via USB CDC.
+//      [Sensor] ─► [MCU: pack frame] ─► [Pi: UKF + Neighbour Track]
+//                                            │
+//                            output (lat/lon, speed, heading):
+//                              • Ego:        dari UKF
+//                              • Neighbors:  dari Neighbour Track
+//                                            │
+//                                      ▼ JSON @ ~10Hz
+//                                 [Flutter UI]
+//
+//    Format koordinat: GEOGRAPHIC (lat/lon WGS84), bukan ENU/x-y.
+//    Flutter yang lakukan konversi lat/lon → distance & arah relatif.
 // ============================================================
 
 /// Status emergency yang di-broadcast tiap kendaraan via LoRA.
@@ -17,20 +25,17 @@ enum EmergencyStatus {
 }
 
 /// State mobil ego (kendaraan kita sendiri).
-/// Field: GPS fused + OBD + IMU-derived heading.
+/// Output dari Unscented Kalman Filter di Pi.
 class EgoState {
-  /// Posisi geografis (hasil fusion UKF di Pi).
+  /// Posisi geografis (lat/lon WGS84).
   final double lat;
   final double lon;
-
-  /// Posisi lokal frame (East, North) dalam meter — untuk perhitungan jarak.
-  final double x;
-  final double y;
 
   /// Speed dari OBD (km/h).
   final double speedKmh;
 
-  /// Heading dari IMU/GPS (derajat, 0=Utara, 90=Timur).
+  /// Heading (derajat, 0=Utara, 90=Timur, clockwise).
+  /// Penting untuk hitung arah RELATIF saat menentukan warning LEFT/RIGHT/FRONT/REAR.
   final double headingDeg;
 
   /// Engine RPM dari OBD PID 0x0C.
@@ -39,31 +44,34 @@ class EgoState {
   /// Engine temperature dari OBD PID 0x05 (Celsius).
   final double engineTempC;
 
+  /// Fuel level dari OBD PID 0x2F. Range 0-100 (persen).
+  /// 0 = tangki kosong, 100 = tangki penuh.
+  final double fuelLevelPct;
+
   const EgoState({
     required this.lat,
     required this.lon,
-    required this.x,
-    required this.y,
     required this.speedKmh,
     required this.headingDeg,
     required this.engineRpm,
     required this.engineTempC,
+    required this.fuelLevelPct,
   });
 
   /// Empty state — placeholder saat data belum masuk.
   static const EgoState empty = EgoState(
     lat: 0,
     lon: 0,
-    x: 0,
-    y: 0,
     speedKmh: 0,
     headingDeg: 0,
     engineRpm: 0,
     engineTempC: 0,
+    fuelLevelPct: 0,
   );
 }
 
-/// State mobil lain (neighbor) yang di-receive via LoRA broadcast.
+/// State mobil lain (neighbor) — output dari Neighbour Track di Pi.
+/// Posisi datang sebagai LoRA broadcast lalu di-track/propagate.
 class NeighborState {
   /// ID unik mobil lain (misal MAC LoRA atau VIN).
   final String id;
@@ -72,11 +80,10 @@ class NeighborState {
   final double lat;
   final double lon;
 
-  /// Posisi lokal (East, North) relatif ke origin yang sama dengan ego.
-  final double x;
-  final double y;
-
+  /// Speed (km/h) dari neighbor.
   final double speedKmh;
+
+  /// Heading (derajat, 0=Utara).
   final double headingDeg;
 
   /// Status emergency yang DIDEKLARASIKAN sendiri oleh mobil itu via LoRA.
@@ -87,8 +94,6 @@ class NeighborState {
     required this.id,
     required this.lat,
     required this.lon,
-    required this.x,
-    required this.y,
     required this.speedKmh,
     required this.headingDeg,
     required this.emergencyStatus,

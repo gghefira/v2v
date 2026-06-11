@@ -122,20 +122,17 @@ class SerialDataSource implements DataSource {
       ego: EgoState(
         lat: (ego['lat'] as num).toDouble(),
         lon: (ego['lon'] as num).toDouble(),
-        x: (ego['x'] as num?)?.toDouble() ?? 0,
-        y: (ego['y'] as num?)?.toDouble() ?? 0,
         speedKmh: (ego['speed_kmh'] as num).toDouble(),
         headingDeg: (ego['heading_deg'] as num?)?.toDouble() ?? 0,
         engineRpm: (ego['engine_rpm'] as num?)?.toDouble() ?? 0,
         engineTempC: (ego['engine_temp_c'] as num?)?.toDouble() ?? 0,
+        fuelLevelPct: (ego['fuel_level_pct'] as num?)?.toDouble() ?? 0,
       ),
       neighbors: neighbors.map((n) {
         return NeighborState(
           id: n['id'] as String,
           lat: (n['lat'] as num).toDouble(),
           lon: (n['lon'] as num).toDouble(),
-          x: (n['x'] as num?)?.toDouble() ?? 0,
-          y: (n['y'] as num?)?.toDouble() ?? 0,
           speedKmh: (n['speed_kmh'] as num).toDouble(),
           headingDeg: (n['heading_deg'] as num?)?.toDouble() ?? 0,
           emergencyStatus: _parseStatus(n['emergency_status'] as String?),
